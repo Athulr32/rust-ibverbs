@@ -1427,6 +1427,27 @@ impl<'res> PreparedQueuePair<'res> {
     }
 }
 
+/// A memory region registered for RDMA that wraps a user-provided buffer.
+///
+/// Unlike `MemoryRegion<T>`, this does not take ownership of the underlying memory.
+/// Instead, it registers an externally allocated buffer (e.g., shared or static)
+/// with the RDMA device, allowing remote access via RDMA verbs.
+///
+/// The user is responsible for ensuring the lifetime and validity of the buffer
+/// for the duration of RDMA operations.
+pub struct MemoryRegionPtr {
+    mr: *mut ffi::ibv_mr,
+}
+
+impl MemoryRegionPtr {
+    /// Get the remote authentication key used to allow direct remote access to this memory region.
+    pub fn rkey(&self) -> RemoteKey {
+        RemoteKey {
+            key: unsafe { &*self.mr }.rkey,
+        }
+    }
+}
+
 /// A memory region that has been registered for use with RDMA.
 pub struct MemoryRegion<T> {
     mr: *mut ffi::ibv_mr,
@@ -1576,6 +1597,60 @@ impl<'ctx> ProtectionDomain<'ctx> {
             Err(io::Error::last_os_error())
         } else {
             Ok(MemoryRegion { mr, data })
+        }
+    }
+
+    /// Registers a user-provided buffer (`Vec<T>`) as a shared memory region for RDMA.
+    ///
+    /// Unlike `allocate`, this does not allocate or own the memory. Instead, it registers
+    /// the existing buffer's capacity with the RDMA device, allowing all devices to
+    /// share the same memory region for zero-copy operations.
+    ///
+    /// # Safety
+    /// The caller must ensure that the buffer remains valid and unmodified while RDMA operations
+    /// are in progress. Writing to the buffer concurrently from user space while it's being accessed
+    /// by the RDMA device may result in undefined behavior.
+    ///
+    /// # Arguments
+    /// * `data` - A mutable reference to a `Vec<T>` whose capacity is registered for RDMA.
+    ///
+    /// # Returns
+    /// * `MemoryRegionPtr` - A lightweight wrapper over the registered memory region.
+    pub fn allocate_shared<T: Sized + Copy + Default>(
+        &self,
+        data: &mut Vec<T>,
+    ) -> io::Result<MemoryRegionPtr> {
+        let access_flags = ffi::ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_READ
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC;
+
+        let capacity = data.capacity();
+        if capacity == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Buffer capacity is zero"));
+        }
+
+        let mr = unsafe {
+            ffi::ibv_reg_mr(
+                self.pd,
+                data.as_mut_ptr() as *mut _,
+                capacity * mem::size_of::<T>(),
+                access_flags.0 as i32,
+            )
+        };
+
+        // TODO
+        // ibv_reg_mr()  returns  a  pointer to the registered MR, or NULL if the request fails.
+        // The local key (L_Key) field lkey is used as the lkey field of struct ibv_sge when
+        // posting buffers with ibv_post_* verbs, and the the remote key (R_Key)  field rkey  is
+        // used by remote processes to perform Atomic and RDMA operations.  The remote process
+        // places this rkey as the rkey field of struct ibv_send_wr passed to the ibv_post_send
+        // function.
+
+        if mr.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(MemoryRegionPtr { mr })
         }
     }
 
