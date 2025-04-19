@@ -484,6 +484,25 @@ impl Context {
         let gid_table = gid_table.into_iter().map(GidEntry::from).collect();
         Ok(gid_table)
     }
+    
+    /// Queries and returns the attributes of the RDMA device associated with this context.
+    ///
+    /// The returned `ibv_device_attr` contains various hardware capabilities and limits
+    /// such as the maximum number of QPs, CQs, memory regions, and other limits.
+    ///
+    /// # Errors
+    ///
+    /// - Returns an `io::Error` if the underlying `ibv_query_device` call fails.
+    pub fn device_attr(&self) -> io::Result<ffi::ibv_device_attr> {
+        let mut attr = ffi::ibv_device_attr::default();
+        let rc = unsafe { ffi::ibv_query_device(self.ctx, &mut attr) };
+        if rc != 0 {
+            Err(io::Error::from_raw_os_error(rc))
+        } else {
+            Ok(attr)
+        }
+    }
+    
 }
 
 impl Drop for Context {
