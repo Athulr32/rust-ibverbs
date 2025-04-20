@@ -1439,6 +1439,9 @@ pub struct MemoryRegionPtr {
     mr: *mut ffi::ibv_mr,
 }
 
+unsafe impl Send for MemoryRegionPtr {}
+unsafe impl Sync for MemoryRegionPtr {}
+
 impl MemoryRegionPtr {
     /// Get the remote authentication key used to allow direct remote access to this memory region.
     pub fn rkey(&self) -> RemoteKey {
@@ -1447,6 +1450,7 @@ impl MemoryRegionPtr {
         }
     }
 }
+
 
 /// A memory region that has been registered for use with RDMA.
 pub struct MemoryRegion<T> {
