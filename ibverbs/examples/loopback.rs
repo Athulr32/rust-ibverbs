@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 fn main() {
     let ctx = ibverbs::devices()
         .unwrap()
@@ -7,11 +9,11 @@ fn main() {
         .open()
         .unwrap();
 
-    let cq = ctx.create_cq(16, 0).unwrap();
+    let cq = Arc::new(ctx.create_cq(16, 0).unwrap());
     let pd = ctx.alloc_pd().unwrap();
 
     let qp_builder = pd
-        .create_qp(&cq, &cq, ibverbs::ibv_qp_type::IBV_QPT_RC)
+        .create_qp(cq.clone(), cq.clone(), ibverbs::ibv_qp_type::IBV_QPT_RC)
         .unwrap()
         .set_gid_index(1)
         .build()
