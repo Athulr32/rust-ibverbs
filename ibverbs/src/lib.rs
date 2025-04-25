@@ -1738,7 +1738,7 @@ pub struct QueuePair {
 }
 
 unsafe impl Send for QueuePair {}
-unsafe impl<'a> Sync for QueuePair {}
+unsafe impl Sync for QueuePair {}
 
 impl QueuePair {
     /// Posts a linked list of Work Requests (WRs) to the Send Queue of this Queue Pair.
