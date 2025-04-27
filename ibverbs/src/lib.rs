@@ -1848,62 +1848,39 @@ impl QueuePair {
         }
     }
 
-    /// Posts a Work Request (WR) to the Send Queue of this Queue Pair.
+    /// Posts a linked list of Work Requests (WRs) to the Send Queue of this Queue Pair.
     ///
-    /// Generates a HW-specific Send Request for the memory described by the provided slice,
-    /// and adds it to the tail of the Queue Pair's Send Queue without performing any context switch.
-    /// The RDMA device will handle it asynchronously later. If there is a failure because the
-    /// Send Queue is full or because of invalid attributes in the WR, posting stops immediately
-    /// and the pointer to the failing WR is returned.
+    /// Attempts to post the provided WR and any linked WRs to the hardware. If a failure is detected
+    /// while posting (such as invalid attributes or insufficient resources), posting stops immediately,
+    /// and a pointer to the first failing WR is returned.
     ///
-    /// `wr_id` is a 64-bit value associated with this WR. When a Work Completion is generated
-    /// for this send operation, it will include this `wr_id`.
+    /// The `wr` argument must point to a valid `ibv_send_wr` structure. WRs may be linked via the `next`
+    /// field to post multiple send requests at once.
     ///
-    /// `lkey` must be the local key associated with the registered Memory Region that covers the slice.
+    /// On success, returns `Ok(bad_wr)`, where:
+    /// - `bad_wr` is a raw pointer (`*mut ibv_send_wr`) to the first Work Request that failed, if any.
+    /// - If all WRs were successfully posted, `bad_wr` will be null (`ptr::null_mut()`).
     ///
-    /// **The slice must originate from memory that was registered using `ibv_reg_mr`,
-    /// and the `lkey` must match the Memory Region protecting this memory.**
+    /// # Special Cases
     ///
-    /// Internally, the slice will be sent as a single `ibv_send_wr` with opcode `IBV_WR_SEND`.
-    /// The send has `IBV_SEND_SIGNALED` set, so a Work Completion will also be triggered once
-    /// the send finishes.
+    /// - When using the `IBV_SEND_INLINE` flag in the WR, the associated buffer can be safely reused
+    ///   immediately after posting. Otherwise, the memory must stay valid until a Work Completion is retrieved.
     ///
     /// # Safety
     ///
-    /// - The memory referenced by the slice must remain valid and not be reused or dropped until
-    ///   a Work Completion confirming the send has been retrieved from the Completion Queue
-    ///   (i.e., after calling `CompletionQueue::poll`).
-    /// - The provided `lkey` must correctly match the Memory Region protecting the slice.
+    /// - The memory referenced by the Work Requests must remain valid until the send operations complete,
+    ///   and a Work Completion confirming them has been retrieved from the Completion Queue.
+    /// - The WRs must be correctly initialized according to the RDMA device's requirements.
+    /// - Dereferencing the returned `bad_wr` pointer requires an `unsafe` block and must be done with care,
+    ///   as it may point to invalid or partially-initialized memory.
     ///
     /// # Errors
     ///
-    /// - `EINVAL`: Invalid attributes provided in the Work Request.
-    /// - `ENOMEM`: Send Queue is full or not enough resources to post the request.
+    /// - `EINVAL`: Invalid attributes provided in one of the Work Requests.
+    /// - `ENOMEM`: Send Queue is full or not enough resources to post the requests.
     /// - `EFAULT`: Invalid Queue Pair or context provided.
     #[inline]
-    pub unsafe fn post_send_raw<T>(
-        &mut self,
-        slice: &[T],
-        lkey: u32,
-        wr_id: u64,
-    ) -> io::Result<()> {
-        let mut sge = ffi::ibv_sge {
-            addr: slice.as_ptr() as u64,
-            length: mem::size_of_val(slice) as u32,
-            lkey,
-        };
-        let mut wr = ffi::ibv_send_wr {
-            wr_id,
-            next: ptr::null::<ffi::ibv_send_wr>() as *mut _,
-            sg_list: &mut sge as *mut _,
-            num_sge: 1,
-            opcode: ffi::ibv_wr_opcode::IBV_WR_SEND,
-            send_flags: ffi::ibv_send_flags::IBV_SEND_SIGNALED.0,
-            wr: Default::default(),
-            qp_type: Default::default(),
-            __bindgen_anon_1: Default::default(),
-            __bindgen_anon_2: Default::default(),
-        };
+    pub unsafe fn post_send_raw<T>(&mut self, wr: *mut ffi::ibv_send_wr) -> io::Result<*mut ffi::ibv_send_wr> {
         let mut bad_wr: *mut ffi::ibv_send_wr = ptr::null::<ffi::ibv_send_wr>() as *mut _;
 
         // TODO:
@@ -1922,12 +1899,11 @@ impl QueuePair {
 
         let ctx = (*self.qp).context;
         let ops = &mut (*ctx).ops;
-        let errno =
-            ops.post_send.as_mut().unwrap()(self.qp, &mut wr as *mut _, &mut bad_wr as *mut _);
+        let errno = ops.post_send.as_mut().unwrap()(self.qp, wr as *mut _, &mut bad_wr as *mut _);
         if errno != 0 {
             Err(io::Error::from_raw_os_error(errno))
         } else {
-            Ok(())
+            Ok(bad_wr)
         }
     }
 
@@ -2007,55 +1983,44 @@ impl QueuePair {
         }
     }
 
-    /// Posts a Work Request (WR) to the Receive Queue of this Queue Pair.
+    /// Posts a linked list of Work Requests (WRs) to the Receive Queue of this Queue Pair.
     ///
-    /// Generates a HW-specific Receive Request for the provided slice and adds it to the tail of
-    /// the Queue Pair's Receive Queue without performing any context switch. The RDMA device will
-    /// consume one of these Receive Requests as soon as an incoming operation arrives that matches
-    /// the Queue Pair's receive side. If there is a failure because the Receive Queue is full or
-    /// because of invalid attributes in the WR, posting stops immediately and the pointer to the
-    /// failing WR is returned.
+    /// Attempts to post the provided WR and any linked WRs to the hardware. If a failure is detected
+    /// while posting (such as invalid attributes or insufficient resources), posting stops immediately,
+    /// and a pointer to the first failing WR is returned.
     ///
-    /// `wr_id` is a 64-bit value associated with this WR. When a Work Completion is generated
-    /// for this receive operation, it will include this `wr_id`.
+    /// The `wr` argument must point to a valid `ibv_recv_wr` structure. WRs may be linked via the `next`
+    /// field to post multiple receive requests at once.
     ///
-    /// `lkey` must be the local key associated with the registered Memory Region that covers the slice.
+    /// On success, returns `Ok(bad_wr)`, where:
+    /// - `bad_wr` is a raw pointer (`*mut ibv_recv_wr`) to the first Work Request that failed, if any.
+    /// - If all WRs were successfully posted, `bad_wr` will be null (`ptr::null_mut()`).
     ///
-    /// **The slice must originate from memory that was registered using `ibv_reg_mr`,
-    /// and the `lkey` must match the Memory Region protecting this memory.**
+    /// # Special Cases
     ///
-    /// Internally, the slice will be received into using a single `ibv_recv_wr`.
+    /// - If the Queue Pair is associated with a Shared Receive Queue (SRQ), you must use `ibv_post_srq_recv()`
+    ///   instead of this function.
+    /// - When posting to a Unreliable Datagram (UD) Queue Pair, the first 40 bytes of the received buffer
+    ///   are reserved for the Global Routing Header (GRH). Actual message data starts after 40 bytes.
     ///
     /// # Safety
     ///
-    /// - The memory referenced by the slice must remain valid and not be reused or dropped until
-    ///   a Work Completion confirming the receive has been retrieved from the Completion Queue
-    ///   (i.e., after calling `CompletionQueue::poll`).
-    /// - The provided `lkey` must correctly match the Memory Region protecting the slice.
+    /// - The memory referenced by the Work Requests must remain valid until the receive operations complete,
+    ///   and a Work Completion confirming them has been retrieved from the Completion Queue.
+    /// - The WRs must be correctly initialized according to the RDMA device's requirements.
+    /// - Dereferencing the returned `bad_wr` pointer requires an `unsafe` block and must be done with care,
+    ///   as it may point to invalid or partially-initialized memory.
     ///
     /// # Errors
     ///
-    /// - `EINVAL`: Invalid attributes provided in the Work Request.
-    /// - `ENOMEM`: Receive Queue is full or not enough resources to post the request.
+    /// - `EINVAL`: Invalid attributes provided in one of the Work Requests.
+    /// - `ENOMEM`: Receive Queue is full or not enough resources to post the requests.
     /// - `EFAULT`: Invalid Queue Pair or context provided.
     #[inline]
     pub unsafe fn post_receive_raw<T>(
         &mut self,
-        slice: &[T],
-        lkey: u32,
-        wr_id: u64,
-    ) -> io::Result<()> {
-        let mut sge = ffi::ibv_sge {
-            addr: slice.as_ptr() as u64,
-            length: mem::size_of_val(slice) as u32,
-            lkey,
-        };
-        let mut wr = ffi::ibv_recv_wr {
-            wr_id,
-            next: ptr::null::<ffi::ibv_send_wr>() as *mut _,
-            sg_list: &mut sge as *mut _,
-            num_sge: 1,
-        };
+        wr: *mut ffi::ibv_recv_wr
+    ) -> io::Result<*mut ffi::ibv_recv_wr> {
         let mut bad_wr: *mut ffi::ibv_recv_wr = ptr::null::<ffi::ibv_recv_wr>() as *mut _;
 
         // TODO:
@@ -2073,11 +2038,11 @@ impl QueuePair {
         let ctx = (*self.qp).context;
         let ops = &mut (*ctx).ops;
         let errno =
-            ops.post_recv.as_mut().unwrap()(self.qp, &mut wr as *mut _, &mut bad_wr as *mut _);
+            ops.post_recv.as_mut().unwrap()(self.qp, wr as *mut _, &mut bad_wr as *mut _);
         if errno != 0 {
             Err(io::Error::from_raw_os_error(errno))
         } else {
-            Ok(())
+            Ok(bad_wr)
         }
     }
 }
