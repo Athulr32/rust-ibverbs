@@ -1454,6 +1454,13 @@ impl MemoryRegionPtr {
             key: unsafe { &*self.mr }.rkey,
         }
     }
+
+    /// Get the local authentication key used by the local RDMA device to access this memory region.
+    pub fn lkey(&self) -> LocalKey {
+        LocalKey {
+            key: unsafe { &*self.mr }.lkey,
+        }
+    }
 }
 
 /// A memory region that has been registered for use with RDMA.
@@ -1486,12 +1493,27 @@ impl<T> MemoryRegion<T> {
             key: unsafe { &*self.mr }.rkey,
         }
     }
+
+    /// Get the local authentication key used by the local RDMA device to access this memory region.
+    pub fn lkey(&self) -> LocalKey {
+        LocalKey {
+            key: unsafe { &*self.mr }.lkey,
+        }
+    }
 }
 
 /// A key that authorizes direct memory access to a memory region.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct RemoteKey {
+    /// The actual key value.
+    pub key: u32,
+}
+
+/// A key that authorizes local RDMA access to a memory region.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct LocalKey {
     /// The actual key value.
     pub key: u32,
 }
