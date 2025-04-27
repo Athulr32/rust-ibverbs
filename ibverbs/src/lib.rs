@@ -337,7 +337,20 @@ unsafe impl Sync for ContextInner {}
 unsafe impl Send for ContextInner {}
 
 impl ContextInner {
-    fn query_port(&self) -> io::Result<ffi::ibv_port_attr> {
+    /// Queries the attributes of the RDMA device's port.
+    ///
+    /// This retrieves dynamic information about the RDMA port, such as its state, LID, and capability flags.
+    /// The result is valid only if the port is in `ACTIVE` or `ARMED` state; otherwise, an error is returned.
+    ///
+    /// It is recommended **not** to cache the result permanently, as port attributes may change at runtime,
+    /// especially when the Subnet Manager (SM) reconfigures the network (in InfiniBand) or the hardware updates
+    /// the port status.
+    ///
+    /// # Errors
+    ///
+    /// - Returns an error if the underlying `ibv_query_port` call fails.
+    /// - Returns an error if the port is not in `ACTIVE` or `ARMED` state.
+    pub fn query_port(&self) -> io::Result<ffi::ibv_port_attr> {
         // TODO: from http://www.rdmamojo.com/2012/07/21/ibv_query_port/
         //
         //   Most of the port attributes, returned by ibv_query_port(), aren't constant and may be
