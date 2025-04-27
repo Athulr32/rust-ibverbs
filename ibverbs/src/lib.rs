@@ -350,7 +350,7 @@ impl ContextInner {
     ///
     /// - Returns an error if the underlying `ibv_query_port` call fails.
     /// - Returns an error if the port is not in `ACTIVE` or `ARMED` state.
-    pub fn query_port(&self) -> io::Result<ffi::ibv_port_attr> {
+    fn query_port(&self) -> io::Result<ffi::ibv_port_attr> {
         // TODO: from http://www.rdmamojo.com/2012/07/21/ibv_query_port/
         //
         //   Most of the port attributes, returned by ibv_query_port(), aren't constant and may be
@@ -390,6 +390,12 @@ impl ContextInner {
 }
 
 impl Context {
+
+    /// Query device port
+    pub fn query_port(&self)-> io::Result<ffi::ibv_port_attr> {
+        self.inner.query_port()
+    }
+
     /// Opens a context for the given device, and queries its port and gid.
     fn with_device(dev: *mut ffi::ibv_device) -> io::Result<Context> {
         assert!(!dev.is_null());
