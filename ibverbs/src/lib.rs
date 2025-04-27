@@ -1880,7 +1880,7 @@ impl QueuePair {
     /// - `ENOMEM`: Send Queue is full or not enough resources to post the requests.
     /// - `EFAULT`: Invalid Queue Pair or context provided.
     #[inline]
-    pub unsafe fn post_send_raw<T>(&mut self, wr: *mut ffi::ibv_send_wr) -> io::Result<*mut ffi::ibv_send_wr> {
+    pub unsafe fn post_send_raw(&mut self, wr: *mut ffi::ibv_send_wr) -> io::Result<*mut ffi::ibv_send_wr> {
         let mut bad_wr: *mut ffi::ibv_send_wr = ptr::null::<ffi::ibv_send_wr>() as *mut _;
 
         // TODO:
@@ -2017,7 +2017,7 @@ impl QueuePair {
     /// - `ENOMEM`: Receive Queue is full or not enough resources to post the requests.
     /// - `EFAULT`: Invalid Queue Pair or context provided.
     #[inline]
-    pub unsafe fn post_receive_raw<T>(
+    pub unsafe fn post_receive_raw(
         &mut self,
         wr: *mut ffi::ibv_recv_wr
     ) -> io::Result<*mut ffi::ibv_recv_wr> {
