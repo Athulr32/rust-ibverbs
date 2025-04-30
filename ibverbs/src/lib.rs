@@ -390,9 +390,8 @@ impl ContextInner {
 }
 
 impl Context {
-
     /// Query device port
-    pub fn query_port(&self)-> io::Result<ffi::ibv_port_attr> {
+    pub fn query_port(&self) -> io::Result<ffi::ibv_port_attr> {
         self.inner.query_port()
     }
 
@@ -1713,6 +1712,53 @@ impl ProtectionDomain {
         }
     }
 
+    /// Registers an externally allocated memory buffer for RDMA operations.
+    ///
+    /// This function does not allocate memory. Instead, it registers a raw pointer and length
+    /// as a memory region with the RDMA device.
+    ///
+    /// # Safety
+    /// The caller must ensure the provided memory region:
+    /// - Remains valid (not deallocated) for the lifetime of the RDMA operations.
+    /// - Is not mutated concurrently while RDMA accesses are in progress.
+    /// Failing to meet these conditions can result in undefined behavior.
+    ///
+    /// # Arguments
+    /// * `ptr` - A raw pointer to the start of the memory region to register.
+    /// * `len` - The length (in bytes) of the memory region.
+    ///
+    /// # Returns
+    /// * `MemoryRegionPtr` - A wrapper around the RDMA-registered memory region.
+    pub fn allocate_raw(&self, ptr: *mut c_void, len: usize) -> io::Result<MemoryRegionPtr> {
+        let access_flags = ffi::ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_READ
+            | ffi::ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC;
+
+        if len == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Buffer len is zero",
+            ));
+        }
+
+        let mr = unsafe { ffi::ibv_reg_mr(self.inner.pd, ptr, len, access_flags.0 as i32) };
+
+        // TODO
+        // ibv_reg_mr()  returns  a  pointer to the registered MR, or NULL if the request fails.
+        // The local key (L_Key) field lkey is used as the lkey field of struct ibv_sge when
+        // posting buffers with ibv_post_* verbs, and the the remote key (R_Key)  field rkey  is
+        // used by remote processes to perform Atomic and RDMA operations.  The remote process
+        // places this rkey as the rkey field of struct ibv_send_wr passed to the ibv_post_send
+        // function.
+
+        if mr.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(MemoryRegionPtr { mr })
+        }
+    }
+
     /// Allocates and registers a Memory Region (MR) associated with this `ProtectionDomain`.
     ///
     /// This process allows the RDMA device to read and write data to the allocated memory. Only
@@ -1899,7 +1945,10 @@ impl QueuePair {
     /// - `ENOMEM`: Send Queue is full or not enough resources to post the requests.
     /// - `EFAULT`: Invalid Queue Pair or context provided.
     #[inline]
-    pub unsafe fn post_send_raw(&mut self, wr: *mut ffi::ibv_send_wr) -> io::Result<*mut ffi::ibv_send_wr> {
+    pub unsafe fn post_send_raw(
+        &mut self,
+        wr: *mut ffi::ibv_send_wr,
+    ) -> io::Result<*mut ffi::ibv_send_wr> {
         let mut bad_wr: *mut ffi::ibv_send_wr = ptr::null::<ffi::ibv_send_wr>() as *mut _;
 
         // TODO:
@@ -2038,7 +2087,7 @@ impl QueuePair {
     #[inline]
     pub unsafe fn post_receive_raw(
         &mut self,
-        wr: *mut ffi::ibv_recv_wr
+        wr: *mut ffi::ibv_recv_wr,
     ) -> io::Result<*mut ffi::ibv_recv_wr> {
         let mut bad_wr: *mut ffi::ibv_recv_wr = ptr::null::<ffi::ibv_recv_wr>() as *mut _;
 
@@ -2056,8 +2105,7 @@ impl QueuePair {
 
         let ctx = (*self.qp).context;
         let ops = &mut (*ctx).ops;
-        let errno =
-            ops.post_recv.as_mut().unwrap()(self.qp, wr as *mut _, &mut bad_wr as *mut _);
+        let errno = ops.post_recv.as_mut().unwrap()(self.qp, wr as *mut _, &mut bad_wr as *mut _);
         if errno != 0 {
             Err(io::Error::from_raw_os_error(errno))
         } else {
